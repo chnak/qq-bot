@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.yarn.lock
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.skills-lock.json
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json*
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.agent/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Agent data (may contain sensitive info)
+.agent/data/
+!.agent/data/.gitkeep
+
+# Custom plugins (can be versioned separately)
+# .agent/plugins/
+
+# Lock files (pick one to use)
+# pnpm-lock.yaml
+# yarn.lock
+
+# Debug
+.node-version
+.npmrc
