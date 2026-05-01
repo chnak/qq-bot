@@ -60,6 +60,9 @@ export class WebSocketConnection {
   private abortSignal: AbortSignal | null = null;
   private heartbeatInterval = 30000;
   private lastSeq: number | null = null;
+  private connectRetries = 0;
+  private maxConnectRetries = 5;
+  private connectRetryDelay = 1000;
 
   constructor(options: ConnectionOptions) {
     this.gatewayUrl = options.gatewayUrl;
@@ -101,27 +104,36 @@ export class WebSocketConnection {
     wsUrl.searchParams.set("access_token", this.accessToken);
 
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(wsUrl.toString());
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl.toString());
+      } catch (err) {
+        this.handleConnectError(err instanceof Error ? err : new Error(String(err)), reject, wsUrl.toString());
+        return;
+      }
+
+      this.ws = ws;
 
       const rejectOnce = (err: Error) => {
-        this.ws?.removeAllListeners();
+        ws.removeAllListeners();
         reject(err);
       };
 
-      this.ws.on("open", () => {
+      ws.on("open", () => {
         this._state = "connected";
         this.reconnectAttempts = 0;
+        this.connectRetries = 0;
         this.log?.info("[qqbot-sdk] Connected to gateway");
         this.startHeartbeat();
         this.onConnected?.();
         resolve();
       });
 
-      this.ws.on("message", (data: WebSocket.RawData) => {
+      ws.on("message", (data: WebSocket.RawData) => {
         this.handleMessage(data);
       });
 
-      this.ws.on("close", (code: number, reason: Buffer) => {
+      ws.on("close", (code: number, reason: Buffer) => {
         this._state = "disconnected";
         this.stopHeartbeat();
         const reasonStr = reason.toString();
@@ -130,20 +142,49 @@ export class WebSocketConnection {
         this.scheduleReconnect();
       });
 
-      this.ws.on("error", (err: Error) => {
+      ws.on("error", (err: Error) => {
         this.log?.error(`[qqbot-sdk] WebSocket error: ${err.message}`);
         this.onError?.(err);
-        rejectOnce(err);
+        this.handleConnectError(err, reject, wsUrl.toString());
       });
 
       // 超时
       setTimeout(() => {
         if (this._state === "connecting") {
-          this.ws?.terminate();
+          ws.terminate();
           rejectOnce(new Error("Connection timeout"));
         }
       }, 10000);
     });
+  }
+
+  /**
+   * 处理连接错误（带重试）
+   */
+  private handleConnectError(err: Error, reject: (err: Error) => void, wsUrl: string): void {
+    if (this._state === "disconnecting" || this._state === "disconnected") {
+      reject(err);
+      return;
+    }
+
+    if (this.abortSignal?.aborted) {
+      reject(err);
+      return;
+    }
+
+    if (this.connectRetries >= this.maxConnectRetries) {
+      this.log?.error(`[qqbot-sdk] Max connection retries (${this.maxConnectRetries}) reached`);
+      reject(err);
+      return;
+    }
+
+    this.connectRetries++;
+    const delay = this.connectRetryDelay * Math.pow(2, this.connectRetries - 1);
+    this.log?.info(`[qqbot-sdk] Connection failed, retrying in ${delay}ms (${this.connectRetries}/${this.maxConnectRetries}): ${err.message}`);
+
+    setTimeout(() => {
+      void this.connectInternal();
+    }, delay);
   }
 
   /**

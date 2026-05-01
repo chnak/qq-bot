@@ -28,6 +28,7 @@ export {
   type MediaFileType,
   type UploadMediaResponse,
   type QQBotClientConfig,
+  type RetryOptions,
   type Logger,
 } from "./types/index.js";
 
@@ -68,6 +69,7 @@ interface QQBotClient {
 
   // ── 发送消息 ──
   sendC2CMessage(params: { openid: string; content: string; msgId?: string }): Promise<MessageResponse>;
+  sendC2CInputNotify(openid: string, msgId?: string, inputSecond?: number): Promise<void>;
   sendGroupMessage(params: { groupOpenid: string; content: string; msgId?: string }): Promise<MessageResponse>;
   sendChannelMessage(params: { channelId: string; guildId: string; content: string; msgId?: string }): Promise<{ id: string; timestamp: string }>;
 
@@ -115,6 +117,7 @@ export function createQQBotClient(config: QQBotClientConfig & { log?: Logger }):
     accessToken: config.accessToken,
     markdownSupport: config.markdownSupport,
     log,
+    retry: config.retry,
   });
 
   const dispatcher = new EventDispatcher();
@@ -170,6 +173,10 @@ export function createQQBotClient(config: QQBotClientConfig & { log?: Logger }):
     // ── 发送消息 ──
     async sendC2CMessage({ openid, content, msgId }) {
       return api.sendC2CMessage(openid, content, msgId);
+    },
+
+    async sendC2CInputNotify(openid, msgId, inputSecond = 60) {
+      return api.sendC2CInputNotify(openid, msgId, inputSecond);
     },
 
     async sendGroupMessage({ groupOpenid, content, msgId }) {

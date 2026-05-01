@@ -2,7 +2,7 @@
  * API 客户端
  */
 
-import type { Logger } from "../types/index.js";
+import type { Logger, InlineKeyboard } from "../types/index.js";
 import { getAccessToken as fetchAccessToken } from "./auth.js";
 import type { StreamMessageRequest, MessageResponse } from "../types/index.js";
 import { MediaFileType } from "../types/index.js";
@@ -11,9 +11,77 @@ import { computeFileHashes, readFileChunk, runWithConcurrency, putToPresignedUrl
 
 const API_BASE = "https://api.sgroup.qq.com";
 
+// 重试配置
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_DELAY_MS = 1000;
+
 // Plugin User-Agent
 function getPluginUserAgent(): string {
   return `QQBotSDK/1.0.0 (Node/${process.versions.node})`;
+}
+
+/**
+ * 带重试的请求
+ */
+async function requestWithRetry<T>(
+  requestFn: () => Promise<T>,
+  options: {
+    maxRetries?: number;
+    retryDelayMs?: number;
+    retryCondition?: (err: Error) => boolean;
+    log?: Logger;
+    path?: string;
+  } = {},
+): Promise<T> {
+  const { maxRetries = DEFAULT_MAX_RETRIES, retryDelayMs = DEFAULT_RETRY_DELAY_MS, retryCondition, log, path } = options;
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await requestFn();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      // 判断是否应该重试
+      const shouldRetry = attempt < maxRetries && (
+        // 网络错误
+        lastError.message.includes("Network error") ||
+        lastError.message.includes("fetch failed") ||
+        lastError.message.includes("timeout") ||
+        // 服务器错误
+        lastError.message.includes("HTTP 5") ||
+        lastError.message.includes("HTTP 502") ||
+        lastError.message.includes("HTTP 503") ||
+        lastError.message.includes("HTTP 504") ||
+        // 自定义条件
+        (retryCondition && retryCondition(lastError))
+      );
+
+      if (!shouldRetry) {
+        throw lastError;
+      }
+
+      // 计算延迟时间（指数退避）
+      const delay = retryDelayMs * Math.pow(2, attempt);
+      log?.info?.(`[qqbot-sdk] 请求失败，${delay}ms 后重试 (${attempt + 1}/${maxRetries}): ${path ?? lastError.message}`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * 重试配置
+ */
+export interface RetryOptions {
+  /** 最大重试次数（默认 3） */
+  maxRetries?: number;
+  /** 初始重试延迟（ms，默认 1000） */
+  retryDelayMs?: number;
+  /** 是否启用重试（默认 true） */
+  enabled?: boolean;
 }
 
 // Token 缓存状态
@@ -43,6 +111,7 @@ export class QQBotAPIClient {
   private tokenCache: TokenCache | null = null;
   private log?: Logger;
   private markdownSupport: boolean;
+  private retryOptions: Required<RetryOptions>;
 
   constructor(options: {
     appId: string;
@@ -50,12 +119,18 @@ export class QQBotAPIClient {
     accessToken?: string;
     markdownSupport?: boolean;
     log?: Logger;
+    retry?: RetryOptions;
   }) {
     this.appId = options.appId;
     this.clientSecret = options.clientSecret ?? "";
     this.accessToken = options.accessToken ?? null;
     this.markdownSupport = options.markdownSupport ?? false;
     this.log = options.log;
+    this.retryOptions = {
+      maxRetries: options.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
+      retryDelayMs: options.retry?.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+      enabled: options.retry?.enabled ?? true,
+    };
   }
 
   /**
@@ -78,6 +153,7 @@ export class QQBotAPIClient {
         this.tokenCache = cache;
       },
       this.log,
+      { maxRetries: this.retryOptions.maxRetries, retryDelayMs: this.retryOptions.retryDelayMs },
     );
   }
 
@@ -91,9 +167,29 @@ export class QQBotAPIClient {
   }
 
   /**
-   * API 请求封装
+   * API 请求封装（带重试机制）
    */
   async request<T = unknown>(
+    accessToken: string,
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs?: number,
+  ): Promise<T> {
+    const { maxRetries, retryDelayMs, enabled } = this.retryOptions;
+    if (!enabled) {
+      return this.doRequest(accessToken, method, path, body, timeoutMs);
+    }
+    return requestWithRetry(
+      () => this.doRequest(accessToken, method, path, body, timeoutMs),
+      { maxRetries, retryDelayMs, log: this.log, path },
+    );
+  }
+
+  /**
+   * 实际执行 HTTP 请求
+   */
+  private async doRequest<T = unknown>(
     accessToken: string,
     method: string,
     path: string,
@@ -202,6 +298,47 @@ export class QQBotAPIClient {
     const token = await this.getToken();
     const msgSeq = msgId ? this.getNextMsgSeq(msgId) : 1;
     const body = this.buildMessageBody(content, msgId, msgSeq);
+    return this.request<MessageResponse>(token, "POST", `/v2/users/${openid}/messages`, body);
+  }
+
+  /**
+   * 发送正在输入状态提示（仅 C2C 私聊有效）
+   * @param openid 用户 openid
+   * @param msgId 可选，关联的消息 ID
+   * @param inputSecond 保持输入状态的秒数（默认 60）
+   */
+  async sendC2CInputNotify(
+    openid: string,
+    msgId?: string,
+    inputSecond: number = 60,
+  ): Promise<void> {
+    const token = await this.getToken();
+    const msgSeq = msgId ? this.getNextMsgSeq(msgId) : 1;
+    const body: Record<string, unknown> = {
+      msg_type: 6,
+      input_notify: {
+        input_type: 1,
+        input_second: inputSecond,
+      },
+      msg_seq: msgSeq,
+    };
+    if (msgId) body.msg_id = msgId;
+    await this.request(token, "POST", `/v2/users/${openid}/messages`, body);
+  }
+
+  /**
+   * 发送带 Inline Keyboard 的 C2C 消息（按钮点击触发 INTERACTION_CREATE 事件）
+   */
+  async sendC2CMessageWithInlineKeyboard(
+    openid: string,
+    content: string,
+    inlineKeyboard: InlineKeyboard,
+    msgId?: string,
+  ): Promise<MessageResponse> {
+    const token = await this.getToken();
+    const msgSeq = msgId ? this.getNextMsgSeq(msgId) : 1;
+    const body = this.buildMessageBody(content, msgId, msgSeq);
+    body.keyboard = inlineKeyboard;
     return this.request<MessageResponse>(token, "POST", `/v2/users/${openid}/messages`, body);
   }
 

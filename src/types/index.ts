@@ -270,6 +270,18 @@ export interface UploadMediaResponse {
 // ── 客户端配置 ──
 
 /**
+ * 重试配置
+ */
+export interface RetryOptions {
+  /** 最大重试次数（默认 3） */
+  maxRetries?: number;
+  /** 初始重试延迟（ms，默认 1000） */
+  retryDelayMs?: number;
+  /** 是否启用重试（默认 true） */
+  enabled?: boolean;
+}
+
+/**
  * QQ Bot 客户端配置
  */
 export interface QQBotClientConfig {
@@ -281,7 +293,55 @@ export interface QQBotClientConfig {
   accessToken?: string;
   /** 是否启用 markdown 支持（默认 false） */
   markdownSupport?: boolean;
+  /** 重试配置 */
+  retry?: RetryOptions;
 }
+
+// ── 按钮键盘类型 ──
+
+/** 按钮渲染数据 */
+export interface KeyboardRenderData {
+  label: string;
+  visited_label?: string;
+  /** 0=灰色线框  1=蓝色线框  2=推荐回复专用  3=红色字体  4=蓝色背景 */
+  style?: 0 | 1 | 2 | 3 | 4;
+}
+
+/** 单个按钮 */
+export interface KeyboardButton {
+  id: string;
+  render_data?: KeyboardRenderData;
+  action?: {
+    type?: number;
+    data?: string;
+    permission?: unknown;
+    click_limit?: number;
+  };
+  group_id?: string;
+}
+
+/** 一行按钮 */
+export interface KeyboardRow {
+  buttons: KeyboardButton[];
+}
+
+/** CustomKeyboard（自定义按钮内容） */
+export interface CustomKeyboard {
+  rows: KeyboardRow[];
+}
+
+/** MessageKeyboard（inline keyboard / keyboard 共用） */
+export interface MessageKeyboard {
+  /** 模板 ID（与 content 二选一） */
+  id?: string;
+  /** 自定义内容 */
+  content?: CustomKeyboard;
+}
+
+/**
+ * Inline Keyboard（消息内嵌按钮，触发 INTERACTION_CREATE）
+ */
+export type InlineKeyboard = MessageKeyboard;
 
 // ── 日志接口 ──
 
