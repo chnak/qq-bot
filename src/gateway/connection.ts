@@ -33,6 +33,8 @@ export interface ConnectionOptions {
   onDisconnected?: (code: number, reason: string) => void;
   onError?: (error: Error) => void;
   onDispatch?: (op: number, d: unknown, s: number | null, t: string | null) => void;
+  /** 当 token 无效时回调，用于刷新 token 后重连 */
+  onTokenInvalid?: () => void;
 }
 
 /**
@@ -52,6 +54,7 @@ export class WebSocketConnection {
   private onDisconnected?: (code: number, reason: string) => void;
   private onError?: (error: Error) => void;
   private onDispatch?: (op: number, d: unknown, s: number | null, t: string | null) => void;
+  private onTokenInvalid?: () => void;
 
   private _state: ConnectionState = "disconnected";
   private reconnectAttempts = 0;
@@ -72,6 +75,7 @@ export class WebSocketConnection {
     this.onDisconnected = options.onDisconnected;
     this.onError = options.onError;
     this.onDispatch = options.onDispatch;
+    this.onTokenInvalid = options.onTokenInvalid;
   }
 
   /**
@@ -139,6 +143,14 @@ export class WebSocketConnection {
         const reasonStr = reason.toString();
         this.log?.info(`[qqbot-sdk] Disconnected: code=${code}, reason=${reasonStr}`);
         this.onDisconnected?.(code, reasonStr);
+
+        // 4004: Token 无效，需要刷新 token 后重连
+        if (code === 4004) {
+          this.log?.info("[qqbot-sdk] Token invalid (code=4004), triggering token refresh...");
+          this.onTokenInvalid?.();
+          return;
+        }
+
         this.scheduleReconnect();
       });
 
@@ -367,5 +379,14 @@ export class WebSocketConnection {
 
     this._state = "disconnected";
     this.log?.info("[qqbot-sdk] Disconnected by user");
+  }
+
+  /**
+   * 更新 token 和网关 URL（token 刷新后调用）
+   */
+  updateToken(gatewayUrl: string, accessToken: string): void {
+    this.gatewayUrl = gatewayUrl;
+    this.accessToken = accessToken;
+    this.log?.info("[qqbot-sdk] Token updated, will reconnect with new token");
   }
 }

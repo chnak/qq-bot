@@ -142,27 +142,43 @@ export function createQQBotClient(config: QQBotClientConfig & { log?: Logger }):
 
     // ── 连接 ──
     async connect() {
-      gatewayUrl = await api.getGatewayUrl();
-      const token = await api.getToken();
+      const connectWithToken = async () => {
+        gatewayUrl = await api.getGatewayUrl();
+        const token = await api.getToken();
 
-      connection = new WebSocketConnection({
-        gatewayUrl: gatewayUrl!,
-        accessToken: token,
-        log,
-        onConnected: () => {
-          isConnected = true;
-        },
-        onDisconnected: () => {
-          isConnected = false;
-        },
-        onDispatch: (op, d, s, t) => {
-          if (op === 0 && t && d) {
-            void dispatcher.dispatch(t as MessageEventType, d as MessageEvent["raw"]);
-          }
-        },
-      });
+        connection = new WebSocketConnection({
+          gatewayUrl: gatewayUrl!,
+          accessToken: token,
+          log,
+          onConnected: () => {
+            isConnected = true;
+          },
+          onDisconnected: () => {
+            isConnected = false;
+          },
+          onDispatch: (op, d, s, t) => {
+            if (op === 0 && t && d) {
+              void dispatcher.dispatch(t as MessageEventType, d as MessageEvent["raw"]);
+            }
+          },
+          onTokenInvalid: async () => {
+            // Token 无效，清除缓存后重新获取并重连
+            log?.info("[qqbot-sdk] Refreshing token due to invalid error...");
+            api.clearTokenCache();
+            try {
+              const newToken = await api.getToken();
+              gatewayUrl = await api.getGatewayUrl();
+              connection?.updateToken(gatewayUrl, newToken);
+            } catch (err) {
+              log?.error(`[qqbot-sdk] Failed to refresh token: ${err}`);
+            }
+          },
+        });
 
-      await connection.connect();
+        await connection.connect();
+      };
+
+      await connectWithToken();
     },
 
     disconnect() {

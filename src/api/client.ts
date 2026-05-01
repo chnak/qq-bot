@@ -158,6 +158,14 @@ export class QQBotAPIClient {
   }
 
   /**
+   * 清除 token 缓存（token 无效时调用，强制重新获取）
+   */
+  clearTokenCache(): void {
+    this.tokenCache = null;
+    this.log?.info?.(`[qqbot-sdk:${this.appId}] Token cache cleared`);
+  }
+
+  /**
    * 获取网关 URL
    */
   async getGatewayUrl(): Promise<string> {
