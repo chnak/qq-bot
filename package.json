@@ -1,6 +1,6 @@
 {
   "name": "@chnak/qq-bot",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "QQ Bot SDK - TypeScript library for QQ Bot API",
   "repository": "https://github.com/chnak/qq-bot",
   "main": "dist/cjs/index.js",

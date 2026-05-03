@@ -336,7 +336,8 @@ export class WebSocketConnection {
    * 调度重连
    */
   private scheduleReconnect(): void {
-    if (this._state === "disconnecting" || this._state === "disconnected") {
+    // 只有在主动断开时才不重连（disconnecting 状态）
+    if (this._state === "disconnecting") {
       return;
     }
 
