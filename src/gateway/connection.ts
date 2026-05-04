@@ -66,6 +66,8 @@ export class WebSocketConnection {
   private connectRetries = 0;
   private maxConnectRetries = 5;
   private connectRetryDelay = 1000;
+  private isRefreshingToken = false;
+  private reconnectInProgress = false;
 
   constructor(options: ConnectionOptions) {
     this.gatewayUrl = options.gatewayUrl;
@@ -127,6 +129,7 @@ export class WebSocketConnection {
         this._state = "connected";
         this.reconnectAttempts = 0;
         this.connectRetries = 0;
+        this.reconnectInProgress = false;
         this.log?.info("[qqbot-sdk] Connected to gateway");
         this.startHeartbeat();
         this.onConnected?.();
@@ -336,6 +339,12 @@ export class WebSocketConnection {
    * 调度重连
    */
   private scheduleReconnect(): void {
+    // 防止重复调度
+    if (this.reconnectInProgress) {
+      this.log?.info("[qqbot-sdk] Reconnect already in progress, skipping");
+      return;
+    }
+
     // 只有在主动断开时才不重连（disconnecting 状态）
     if (this._state === "disconnecting") {
       return;
@@ -356,7 +365,9 @@ export class WebSocketConnection {
     this.reconnectAttempts++;
     this.log?.info(`[qqbot-sdk] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
+    this.reconnectInProgress = true;
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectInProgress = false;
       void this.connectInternal();
     }, delay);
   }
@@ -388,6 +399,9 @@ export class WebSocketConnection {
   updateToken(gatewayUrl: string, accessToken: string): void {
     this.gatewayUrl = gatewayUrl;
     this.accessToken = accessToken;
-    this.log?.info("[qqbot-sdk] Token updated, will reconnect with new token");
+    this.log?.info("[qqbot-sdk] Token updated, reconnecting...");
+    // 重置重连状态，使用新 token 重新连接
+    this.reconnectAttempts = 0;
+    this.scheduleReconnect();
   }
 }
